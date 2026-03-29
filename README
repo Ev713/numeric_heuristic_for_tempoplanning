@@ -1,203 +1,272 @@
-OPTIC
------
+# Numeric Heuristic For Temporal Planning
 
-This package contains OPTIC, a planner for use in problems where plan cost is
-determined by preferences or time-dependent goal-collection costs.  For more
-details, see the paper "Temporal Planning with Preferences and Time-Dependent 
-Continuous Costs", J. Benton, A. J. Coles, and A. I. Coles, ICAPS 2012.  
+This repository is a research fork of the OPTIC temporal planner. The goal of
+the fork is to experiment with a numeric reduction of temporal planning
+problems: compile temporal structure into a numeric abstraction that preserves
+useful timing information while remaining close to a numeric STRIPS-style
+representation, then use that abstraction to build a stronger heuristic than
+the original FF-style heuristic used by OPTIC.
 
-OPTIC is derived from the planner POPF.  In the interests of developing a
-single, capable planner, the sources here also contain the TIL-abstraction 
-extension of POPF described in the paper "Automated  Planning for Liner 
-Shipping Fleet Repositioning", K. Tierney, A. J. Coles, A. I. Coles, C. Kroer,
-A. Britt, and R. M. Jensen, ICAPS 2012.  This can be invoked with an extra
-command line flag (details below).
+At a high level:
 
-Build Prerequisites
--------------------
+- upstream OPTIC provides parsing, grounding, temporal reasoning, search, and
+  scheduling
+- upstream VAL provides the PDDL parser, typechecker, and validation-related
+  infrastructure used by OPTIC
+- this fork adds a separate "numeric search" path under `src/optic` intended to
+  hold the compilation and numeric heuristic code
 
-In order to function, OPTIC requires either CLP or CPLEX:
+The repository currently contains the scaffold for that work. The numeric path
+is present in the codebase and build system, but it is not yet a full
+implementation of the compilation described below.
 
-- If you wish to use OPTIC in problems with Preferences or in which TIL
-  abstraction is used, you will need CPLEX.  For academic use, CPLEX can be
-  obtained for free via the IBM Academic Initiative.
+## What This Repo Is
 
-- In other cases, CLP should suffice, and is generally faster.
+The codebase is mostly the OPTIC planner source tree with local modifications.
+The important directories are:
 
-In both cases, you also need:
+- `src/optic`: the planner itself, including search, relaxed planning graph,
+  scheduling, and the numeric-search fork points
+- `src/VALfiles`: VAL parser, typechecking, and related support code used by
+  the planner front-end
+- `tests`: sample domain/problem files for manual experiments
 
-- cmake
-- perl, bison and flex (used to build the parser)
+This fork should be understood as "OPTIC plus an in-progress numeric heuristic
+research branch", not as a clean-room planner implementation.
 
-Packages of these are available for most linux distributions. For Ubuntu, 
-the following should install CLP and the other build pre-requisites:
+## OPTIC In This Repository
 
-sudo apt-get install cmake coinor-libcbc-dev coinor-libclp-dev \
-                     coinor-libcoinutils-dev libbz2-dev bison flex
-            
+OPTIC is a forward-chaining temporal planner derived from POPF. In this tree it
+is responsible for:
 
-Compiling
----------
+- parsing PDDL domain and problem files
+- instantiating grounded operators
+- building the temporal relaxed planning graph
+- evaluating states with the standard FF/RPG-style heuristic
+- searching over partial-order temporal states
+- checking and refining temporal consistency with the scheduler
 
-Compilation is in two stages:
+The original OPTIC entry point is in `src/optic/opticMain.cpp`. The planner
+builds the instantiated problem, initializes the RPG machinery, then runs the
+FF/OPTIC search stack.
 
-1) Configure
+The core upstream subsystems you are likely to touch are:
 
-Run one of:
+- `RPGBuilder*`: grounded representation and relaxed planning graph machinery
+- `FFSolver*`: search over temporal states
+- `minimalstate*`: search-state representation
+- `temporalanalysis*`, `temporalconstraints*`, `lpscheduler*`: temporal
+  reasoning and schedule checking
 
-run-cmake-debug, if you want to link against CLP, with debugging enabled
+## VAL In This Repository
 
-run-cmake-for-cplex-debug-x86, if you want to link against CLP and/or CPLEX,
-  with debugging enabled.  It assumes you are using the 32-bit version of
-  CPLEX, on Linux - if this is not the case, edit the script.
+VAL is bundled because OPTIC depends on it for parsing and semantic analysis of
+PDDL input. In practical terms, `src/VALfiles` supplies:
 
-run-cmake-release, if you want to link against CLP, with debugging disabled,
-  and producing a non-static binary.
+- lexer/parser support
+- PDDL AST structures
+- typechecking
+- instantiation support used by the planner front-end
+- validator-related utility code inherited with the upstream distribution
 
-run-cmake-static, if you want to link against CLP, with debugging disabled,
-  and producing a statically linked binary
+This repository is not primarily a VAL project, but OPTIC will not build or run
+without that code.
 
-run-cmake-for-cplex-static-x86, if you want to link against CLP and/or CPLEX,
-  and producing a statically linked binary.    It assumes you are using the
-  32-bit version of CPLEX, on Linux - if this is not the case, edit the
-  script.
+## Research Goal: Numeric Reduction Of Temporal Problems
 
+The intended research direction in this fork is:
 
-Note that if you want to make static binaries with CLP, you must have static
-versions of the CLP libraries installed.  This may mean downloading and
-compiling CBC from source, making sure it makes static (not shared) libraries.
-The advantage is that the binary produced does not require CLP to be installed
-at run-time, which can be useful when running it on different machines.
+1. start from a temporal planning problem
+2. split each durative action into start and end actions
+3. enrich that split-action problem with auxiliary boolean and numeric
+   variables that track temporal information
+4. solve or relax the enriched numeric problem to obtain a heuristic for the
+   original temporal search
 
-*Users of 64-bit Machines*: it is almost certainly not worth compiling OPTIC
-in 64-bit mode.  To force 32-bit compilation, before running one of the
-scripts above, type:
+The point is not to recover the exact original temporal problem inside a
+classical planner. The point is to create a reduction that is stricter than the
+naive start/end split, while still being cheap enough to evaluate during
+search.
 
-export CFLAGS=-m32
-export CXXFLAGS=-m32
-export LDFLAGS=-m32
+### Baseline Split Reduction
 
-In 32-bit mode, OPTIC it is limited by the number of states it can
-store in 4GB of memory.  To be able to store more states than this, with a
-64-bit binary, considerably more memory is required, as e.g. ints and pointers
-are twice the size.  (If you do have considerably more memory, then of course,
-feel free to try.)
+The standard starting point is to split each durative action `a` into:
 
-2) Build
+- a start action `a^start`
+- an end action `a^end`
 
-If you ran one of the run-*-debug scripts, now run:
+This preserves some temporal structure, but it loses a lot of information about
+whether a sequence of starts and ends can actually be scheduled in time.
 
-./build-debugging
+## Intended Compilation
 
-If you ran run-cmake-release, now run:
+The current theory behind the fork adds numeric machinery to the split problem
+to track lower and upper bounds on the makespan of a partially ordered temporal
+execution.
 
-./build-release
+### Lower-Bound Tracking
 
-If you ran one of the run-*-static scripts, now run:
+The lower-bound side of the compilation keeps a bounded number of implicit
+"levels". Each level tracks a non-overlapping chain of actions. If actions on
+the same level do not intersect, then the sum of their minimum durations is a
+valid lower bound on the overall makespan.
 
-./build-static
+The theory introduces, for each tracked level `k`:
 
+- a boolean flag indicating whether level `k` currently has an open action
+- per-action flags indicating whether action `a` is open in level `k`
+- a numeric variable `time_span(k)` that accumulates minimum durations of
+  closed actions assigned to that level
 
-In all three cases, the binaries produced will be called optic-clp and/or
-optic-cplex, and they will be located in either debug/optic, release/optic
-or static/optic, respectively.
+Intuitively:
 
+- opening an action places it in the first available level
+- closing that action removes it from the level and adds `d_min(a)` to that
+  level's accumulated span
 
-Running
--------
+Each `time_span(k)` is then a lower bound on the full plan makespan.
 
-Once compiled, run, e.g.:
+### Upper-Bound Tracking
 
-optic-cplex domain.pddl problem.pddl
+The upper-bound side of the compilation tries to maintain a chain of
+intersecting actions linking the beginning of the plan to the end of the plan.
+The sum of the maximum durations of the actions in that chain is an upper bound
+on makespan.
 
-This runs OPTIC on the given domain and problem file, carrying on search
-after the first solution in an attempt to optimise quality. If you want to
-ignore solution costs and stop after the first solution, run:
+The theory introduces:
 
-optic-cplex -N domain.pddl problem.pddl
+- a global `time_span` for the upper-bound chain
+- a per-action numeric marker `poten_link(a)`
+- a binary `link_parity` variable
 
-Or, if you have an upper-bound on plan cost, run:
+The rough idea is:
 
-optic-cplex -n<bound> domain.pddl problem.pddl
+- every opening action marks itself as a candidate for the next chain link
+- every opening action also adds `d_max(a)` to the upper-bound accumulator
+- when an action closes, it is either:
+  - a true link in the chain, in which case parity flips and the action is
+    retired from consideration, or
+  - a non-link action, in which case its previously added `d_max(a)` is
+    removed from the accumulator
 
-This is mainly useful if you want, as a first-pass, to search ignoring
-preferences: run with -N, to get a plan with cost <bound>; then run with
--n<bound> to carry on searching.
+This part of the theory is more complex than the lower-bound side and is still
+research code in design terms.
 
-To enable TIL abstraction, add the command-line option '-0', e.g.:
+### Combined Reduction
 
-optic-cplex -0 domain.pddl problem.pddl
+The final intended compiled problem combines:
 
-On domains without preferences, and where TIL-abstraction is not enabled.
-it is usually faster to use optic-clp instead of optic-cplex. It is run in the
-same way, e.g.:
+- the original boolean effects of the split temporal actions
+- the lower-bound auxiliary variables
+- the upper-bound auxiliary variables
+- consistency conditions enforcing that tracked lower bounds do not exceed
+  tracked upper bounds
 
-optic-clp domain.pddl problem.pddl
+The intended heuristic benefit is that the compiled numeric relaxation should
+rule out more temporally impossible partial plans than the plain split-action
+encoding.
 
-If you wish to insist that each solution has to be at least 10 better than
-the last found, run:
+## Current Implementation Status
 
-optic-clp '->10' domain.pddl problem.pddl
+The current code contains the first structural hooks for this work under
+`src/optic`:
 
-Note that the planner does not, itself, limit its time and/or memory usage.
-Apply these by using the relevant shell commands beforehand, e.g.:
+- `NumericCompilation.*`
+- `NumericSolver.*`
+- `NumericRPGBuilder.*`
+- `NumericFFSolver.*`
 
-bash
-ulimit -t 1800
-ulimit -v 4000000
-./optic-clp domain.pddl problem.pddl
+The build system also exposes separate numeric binaries:
 
+- `optic-numeric-clp`
+- `optic-numeric-cplex`
 
-...will limit the planner to 30 minutes of CPU and 4GiB of memory.
+These are enabled with `-DUSE_NUMERIC_SEARCH`.
 
+Important limitation: the current implementation is only a scaffold.
 
-Feedback
---------
+Today, the numeric path does the following:
 
-If you do something exciting with OPTIC, do let us know.  If you tried to do 
-something with it, but it failed, you may have found a bug.  In common with
-POPF, the three most likely sources of bugs are:
+- initializes a `NumericCompilation` object from the current grounded problem
+- allocates a `NumericSolver`
+- routes execution through `NumericFF`
+- forces `RPGHeuristic::blindSearch`
 
-The three most common causes of bugs (over 90% of bug reports) are:
+Today, the numeric path does not yet do the following:
 
-- Using ADL. ADL is supported in the conditions of preferences, in the
-  time-dependent costs of goal-collection actions, and one or two other niche
-  cases.  We've attempted to make the planner degrade gracefully, but there are
-  still cases where it will report problems using ADL as being unsolvable.
-  ** In particular check there are no negative preconditions in your domain. **
-  
-- Domain modelling bugs. OPTIC and POPF support the full start--end semantics
-  of PDDL 2.1, and self-overlapping actions, so errors in the temporal
-  placement of preconditions and effects (at start, at end etc.) are more
-  likely to cause issues with POPF than with other planners. For instance, if
-  a 'move' action is written (erroneously) as deleting the old location at the
-  end (rather than at the start), then OPTIC/POPF will consider concurrent move 
-  actions for the same vehicle; whereas planners which do not make as clear a 
-  distinction between the start and end-points of durative actions would not 
-  consider this. Thus, in domains with errors such as this, they might have to
-  consider a far larger search space than other temporal planners.
+- fully compile temporal actions into the enriched numeric reduction described
+  above
+- evaluate search states with a real numeric-reduction heuristic
+- replace the standard FF heuristic with a stronger compiled numeric estimate
 
-- If the plans don't validate, ensure you are passing the '-t 0.001' flag to
-  VAL: the planner uses an epsilon value of 0.001, smaller than the default
-  0.01 value used in VAL.
+In its current form, `NumericCompilation` mainly records basic problem
+statistics and goal identifiers, and `NumericSolver` mainly checks whether a
+state already satisfies the goals. The core reduction from the theory is still
+to be implemented.
 
-If none of those apply, email as small a possible domain and problem file
-that cause the error you're observing to Andrew Coles:
-firstname.lastname@kcl.ac.uk
+## Code Map For The Numeric Path
 
+If you are working on the research implementation, the most relevant files are:
 
-Licence
--------
+- `src/optic/opticMain.cpp`: chooses standard or numeric search via
+  `USE_NUMERIC_SEARCH`
+- `src/optic/CMakeLists.txt`: defines the numeric binaries
+- `src/optic/NumericRPGBuilder.*`: numeric-search initialization hook
+- `src/optic/NumericCompilation.*`: intended home of the compiled abstraction
+- `src/optic/NumericSolver.*`: intended home of numeric heuristic evaluation
+- `src/optic/NumericFFSolver.*`: wrapper around the search path for the numeric
+  variant
+- `src/optic/FFSolver.*`: current search implementation that ultimately needs
+  to consume the numeric heuristic
 
-OPTIC is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 2 of the License, or
-(at your option) any later version.
+## Build Notes
 
-OPTIC is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+This repository inherits OPTIC's original build model and solver dependencies.
+To build it you need the usual upstream prerequisites, in particular:
 
----------------
-Taken and modified to compile from: https://sourceforge.net/projects/tsgp/files/OPTIC/
+- `cmake`
+- `bison`
+- `flex`
+- either CLP or CPLEX
+
+The helper scripts at repository root are inherited from OPTIC, for example:
+
+- `run-cmake-debug`
+- `run-cmake-release`
+- `run-cmake-static`
+- `run-cmake-for-cplex-debug-x86`
+- `run-cmake-for-cplex-static-x86`
+
+After configuring, use the matching build script:
+
+- `build-debug`
+- `build-release`
+- `build-static`
+
+Depending on available libraries, the resulting binaries include some subset of:
+
+- `optic-clp`
+- `optic-cplex`
+- `optic-numeric-clp`
+- `optic-numeric-cplex`
+
+## Usage Notes
+
+The standard OPTIC binaries behave like upstream OPTIC.
+
+The numeric binaries are experimental. At present they should be treated as a
+development path for the numeric-reduction heuristic, not as a finished planner
+variant with established performance improvements.
+
+## Summary
+
+This repository is:
+
+- an OPTIC-based temporal planner codebase
+- bundled with VAL infrastructure required by OPTIC
+- extended with an in-progress numeric compilation framework for temporal
+  heuristic design
+
+The long-term objective is to compile temporal information into a numeric
+abstraction that is stronger than the naive action-splitting reduction and use
+that abstraction to guide temporal search more effectively.
