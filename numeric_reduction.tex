@@ -1,0 +1,198 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+
+\title{Numeric Reduction Of Temporal Problems}
+\author{Evgeny Mishlyakov}
+\date{March 2026}
+
+\begin{document}
+
+\maketitle
+
+\section{Background and basic assumptions}
+Let $\Pi = \langle F,A,I,G \rangle$ be a temporal planning problem such that $F$ is the set of facts, $I\subset F$ is the initial state and $G\subset F$ is a goal state. $A$ is the set of actions such that each action $a\in A$ has "at start" preconditions: $pre_{\vdash}(a)$, "at end" preconditions $pre_{\dashv}(a)$ and invariant preconditions $pre_{\leftrightarrow}(a)$. Similarly each action $a \in A$ has "at start" and "at end" effects: $eff_{\vdash}(a)$  and $pre_{\dashv}(a)$. Lastly each action has duration precondition which is a tuple $\langle d_{min}(a), d_{max}(a)\rangle$ that signifies the minimum and maximum duration of $a$.
+
+Just like literally everybody else [insert citation to literally everybody else] we assume that each action can be split into the start and end versions: $a^\vdash$ and $a^\dashv$ in a way that preserves the boolean structure (hand-wavy because I cant be bothered with writing it all out). Therefore a simple reduction of the initial problem is the problem $\Pi' = \langle F, A', I, G \rangle$ such that $A' = \bigcup_{a \in A} \{a^{\vdash}, a^\dashv\}$. Each plan of $\Pi$ can be intuitively translated to a plan of $\Pi$. Therefore a solution to $\Pi'$ can be used as an heuristic to $\Pi$. 
+
+The goal of this paper is to add some variables and preconditions to $\Pi'$ to create a more refined reduction $\hat\Pi$ such that every plan of $\hat\Pi$ is a also plan of $\Pi'$ but the set of plans of $\hat\Pi$ is smaller. To do that we find a way to track an upper and lower bound of the duration of the plan and at each step we check that the lower bound is lesser than or equal to the upper bound.
+
+\section{Finding the upper and lower bounds}
+Let $\pi$ be a sequence of split-actions of length $n$ and let $i_(a)$ be the index of a split action $a$ in $\pi$. 
+
+Notice that if exists a sequence of actions $\{a_i\}_{i=1}^k$ such that $\langle a_1^\vdash, a_1^\dashv, a_2^\vdash, a_2^\dashv, \dots, a_k^\vdash, a_k^\dashv\rangle$ is a subsequence of $\pi$ then $\sum_{i=1}^k d_{min}(a)$ is a lower bound of execution time of $\pi$.
+
+Similarly, if exists a sequence of actions $\{a_i\}_{i=1}^k$ such that $i(a_1^\vdash)=1, i(a_k^\dashv)=n$ and $\langle a_1^\vdash, a_2^\vdash,a_1^\dashv, a_3^\vdash a_2^\dashv, \dots, a_{k-1}^\dashv, a_k^\dashv\rangle$ (for every $i<k$, $i(a_i^\dashv) = 1+i(a_{i+1}^\vdash)$meaning that the execution of every non split action in the sequence intersects with the execution of the previous one) is a subsequence of $\pi$ then $\sum_{i=1}^k d_{max}(a)$ is an upper bound of execution time of $\pi$.
+
+\section{Calculating lower bound Live}
+
+In order to find sequences of non-intersecting actions we keep track of $K$ implicit levels.
+We create the following new boolean variables: 
+$$
+\forall k \in [K], a\in A:\quad open\_in(k, a), has\_open\_action(k)
+$$
+That signify that an action $a$ is open at level $k$ and that level $k$ has an open action. 
+We also define a real valued variable: $\forall k \in [K]: time\_span(k)$ that keeps the lower bound of the time span of the action at level $k$.
+When we open an action (perform $a^{\vdash}$ for some $a\in A$) we use the new boolean variables to find the lowest level $k$ that doesn't have an open action and raise the flags $open\_in(k, a), has\_open\_action(k)$. When we close an action $a$ by executing $a^\dashv$ we find a level with this action open, we remove the flags $open\_in(k, a)$, $has\_open\_action(k)$ and add $d_{min}(a)$ to $time\_span(k)$.
+
+Formally, instead of $a^\vdash$ we create the following versions of action $a^\vdash$:
+$\forall 1\le k\le K:\quad open\_to\_level(a, k)$, $open\_outside\_levels(a^\vdash)$.
+The preconditions of this actions (apart from the ones on $F$ inherited from $a^\vdash$) are as following:
+$$
+pre(open\_to\_level(a, 1)) = \{\neg has\_open\_action(1)\}
+$$
+$$
+\forall i \in [2, K]: pre(open\_to\_level(a, i)) = \{\neg has\_open\_action(i), has\_open\_action(i-1)\}
+$$
+$$
+pre(open\_outside\_levels(a)) = \{has\_open\_action(k)\}
+$$
+And the effects of these actions are (apart from the ones on $F$ inherited from $a^\vdash$): 
+$$
+\forall i \in [K]: eff(open\_to\_level(a, i)) = \{has\_open\_action(i), open\_in(i, a)\}
+$$
+$$
+eff(open\_outside\_levels(a)) = \{\}
+$$
+Similarly, instead of $a^\dashv$ we create the following versions of action $a^\dashv$:
+$\forall k \in [K]:\quad close\_at\_level(k, a)$, $close\_outside\_levels(a^\vdash)$.
+The preconditions of this actions (apart from the ones on $F$ inherited from $a^\vdash$) are as following:
+$$
+\forall i \in [K]: pre(close\_at\_level(a, i)) = open\_in(i, a),\bigwedge_{j<i}\neg open\_in(j, a)\}
+$$
+$$
+pre(close\_outside\_levels(a)) = \{\bigwedge_{i \in [K]}\neg open\_in(i, a)\}
+$$
+And the effects of these actions are (apart from the ones on $F$ inherited from $a^\vdash$): 
+$$
+\forall i \in [K]: eff(close\_to\_level(a, i)) = 
+$$
+$$
+\{\neg has\_open\_action(i), \neg open\_in(i, a), time\_span(k)+=d_{min}(a)\}
+$$
+
+$$
+eff(close\_outside\_levels(a)) = \{\}
+$$
+Note that every level tracks a sequence of non-intersecting actions and the sum of their minimum time spans therefore for every $k$, $time\_span(k)$ is a lower bound on time span of the full plan.
+
+
+%For this section we assume that at every moment of time between the start and end of the plan at least one action is open and that no action is opened inside itself. We will describe how to deal with the cases where this is not true later. We denote $M$ to be a very large integer number. It should be greater than the number of actions in any plan (so in reality it can be like a 100 and that will be enough). 
+
+%In order to find an upper bound to the time span of a plan we will keep track of a sequence of actions (that we will call chain) that includes the first-opened and last-closed actions such that every two consequent actions intersect (we will call these links). The chain that we will keep track is the one that results from the following recursive construction: define the first-opened action as a link. Recursively add links in the following manner until the end of plan: Given a link, define the next link to be the action that was opened during this link, and out of all such actions was closed last.
+
+%(Need to write a proof of why it is always possible but it is because if the set of potential links is empty, the previous link was not chosen correctly)
+
+%In order to track that chain define the following axillary variables:
+%Real valued: $\{curr\_link, time\_span\}\cup \bigcup_ {a\in A}\{ poten\_link(a)\}$.
+ %We do not partition opening actions into different versions and at this point we do not want to limit the action space of each state therefore no preconditions are added.
+
+%(There's a way to replace the $curr_open_link$ with a binary variables that tracks if the current link is even or odd which makes the effects for $a^\vdash$ classic and not SNP, need to write it out)
+
+%For every $a\in A$ the new effects of $a^\vdash$ are:
+ 
+ %$$eff(a^{\vdash})=\{ poten\_link(a) := curr\_open\_link + 1, timespan+=d_{max}(a)\}$$
+
+%(This is the only place that makes this compilation problematic, I am not sure but i think there is a way to solve it)
+
+ %For each closing action $a^\dashv$ there are two versions $close\_link(a), close\_not\_link(a)$. When we close an action we declare it to be a link only if it is the last closed action among all actions that started in the previous link, meaning:
+
+%$$pre(close\_link(a)) = \{\bigwedge_{a'\ne a} poten\_link(a') > poten\_link(a)\}$$
+
+%When a link action is closed we raise the current link number and raise the potential link number of the action to $M$:
+
+$$eff(close\_link(a)) = \{curr\_open\_link += 1, poten\_link(a):=M\}$$
+
+%When we close an action, if there is another open action of the same potential link number, it is a non-link action therefore:
+
+%$$pre(close\_non\_link(a, a')) = \{ poten\_link(a') = poten\_link(a)\}$$
+
+%When a non-link action is closed we can subtract from the time span the maximum time-span of the action that we added earlier and raise the potential link number of the action to $M$:
+
+%$$eff(close\_non\_link(a)) = \{ timespan -= d_{max}(a), poten\_link(a):=M\}$$
+
+%(I'm not sure but I think that maybe the very first action should have some kind of special treatment)
+
+For this section we assume that at every moment of time between the start and end of the plan at least one action is open and that no action is opened inside itself. We will describe how to deal with the cases where this is not true later. We denote $M$ to be a very large integer number. It should be greater than the number of actions in any plan (so in reality it can be like $100$ and that will be enough). 
+
+In order to find an upper bound to the time span of a plan we will keep track of a sequence of actions (that we will call chain) that includes the first-opened and last-closed actions such that every two consequent actions intersect (we will call these links). The chain that we will keep track is the one that results from the following recursive construction: define the first-opened action as a link. Recursively add links in the following manner until the end of plan: Given a link, define the next link to be the action that was opened during this link, and out of all such actions was closed last.
+
+(Need to write a proof of why it is always possible but it is because if the set of potential links is empty, the previous link was not chosen correctly)
+
+In order to track that chain define the following auxiliary variables.
+
+Real valued:
+\[
+\{time\_span\}\cup \bigcup_{a\in A}\{ poten\_link(a)\}.
+\]
+
+Binary variable:
+\[
+link\_parity \in \{0,1\}.
+\]
+
+We interpret $link\_parity=0$ as an even link and $link\_parity=1$ as an odd link. Initially $link\_parity=0$.
+
+We do not partition opening actions into different versions and at this point we do not want to limit the action space of each state therefore no preconditions are added.
+
+For every $a\in A$ we introduce two copies of the opening action:
+\[
+a^{\vdash}_{even}, \qquad a^{\vdash}_{odd}.
+\]
+
+The effects of $a^{\vdash}_{even}$ are:
+ 
+\[
+pre(a^{\vdash}_{even}) = \{ link\_parity = 0 \}
+\]
+
+\[
+eff(a^{\vdash}_{even})=\{ poten\_link(a) := 1,\; time\_span+=d_{max}(a)\}
+\]
+
+The effects of $a^{\vdash}_{odd}$ are:
+ 
+\[
+pre(a^{\vdash}_{odd}) = \{ link\_parity = 1 \}
+\]
+
+\[
+eff(a^{\vdash}_{odd})=\{ poten\_link(a) := 0,\; time\_span+=d_{max}(a)\}
+\]
+
+For each closing action $a^\dashv$ there are two versions $close\_link(a), close\_non\_link(a)$.
+When we close an action we declare it to be a link only if it is the last closed action among all actions that started in the previous link, meaning:
+
+\[
+pre(close\_link(a)) = \left\{\bigwedge_{a'\ne a} poten\_link(a') > poten\_link(a)\right\}
+\]
+
+When a link action is closed we flip the parity and raise the potential link number of the action to $M$:
+
+\[
+eff(close\_link(a)) = \{link\_parity := 1 - link\_parity,\; poten\_link(a):=M\}
+\]
+
+When we close an action, if there is another open action of the same potential link number, it is a non-link action therefore:
+
+\[
+pre(close\_non\_link(a, a')) = \{ poten\_link(a') = poten\_link(a)\}
+\]
+
+When a non-link action is closed we can subtract from the time span the maximum time-span of the action that we added earlier and raise the potential link number of the action to $M$:
+
+\[
+eff(close\_non\_link(a)) = \{ timespan -= d_{max}(a),\; poten\_link(a):=M\}
+\]
+
+(I'm not sure but I think that maybe the very first action should have some kind of special treatment)
+\section{What if no actions are open?}
+(Still hand-wavy)
+Re initiate all the auxiliary variables. From now it is as if we start a new plan from another initial state because no time conditions are connecting the before and after of this point. To do that we create a version for every 'close' action that has a precondition that the number of open actions is 1 and in its effects re-initializes all of the auxiliary variables ). 
+
+\section{Combining the two bounds}
+We have defined two and a half sets of versions for each of the actions from $\Pi$ now all we need is to create an action for every choice of three actions- one from each set which makes it toughly $C\cdot K\cdot N^2$ new actions where $N$ is the number of actions and $C$ is some constant that I need to calculate which either 4 or 6, something like that.
+
+\section{What's next?}
+$\hat \Pi$ is a better reduction than $\Pi'$ so instead of solving $\Pi'$ using a classical solver then checking schedulability with an STN, we can use a numeric solver to solve $\hat \Pi$ and schedule the solution for that one which hopefully will result in fewer STN calls and make faster.
+
+\end{document}
