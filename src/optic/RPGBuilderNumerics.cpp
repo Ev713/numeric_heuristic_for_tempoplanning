@@ -1132,7 +1132,7 @@ struct InvData {
 
     struct LTAVPointer {
 
-        bool operator()(const RPGBuilder::ArtificialVariable * const a, const RPGBuilder::ArtificialVariable * const b) {
+        bool operator()(const RPGBuilder::ArtificialVariable * const a, const RPGBuilder::ArtificialVariable * const b) const {
             return ((*a) < (*b));
         };
 
@@ -1140,7 +1140,7 @@ struct InvData {
 
     struct LTRNPPointer {
 
-        bool operator()(const RPGBuilder::RPGNumericPrecondition * const a, const RPGBuilder::RPGNumericPrecondition * const b) {
+        bool operator()(const RPGBuilder::RPGNumericPrecondition * const a, const RPGBuilder::RPGNumericPrecondition * const b) const {
             return ((*a) < (*b));
         };
 

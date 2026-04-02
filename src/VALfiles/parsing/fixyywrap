@@ -8,6 +8,9 @@ system("sed -i 's/yyerror(char/yyerror(const char/' $bindir/pddl+.cpp");
 open IN, "g++ -E $srcdir/fixyywrap.cpp |";
 open OUT, "> $bindir/fixyywrap.h";
 
+print OUT "#ifndef FIXYYWRAP_H\n";
+print OUT "#define FIXYYWRAP_H\n";
+
 while (<IN>) {
 
 	if (m/int yywrap/) {
@@ -16,11 +19,24 @@ while (<IN>) {
 
 }
 
+print OUT "#endif\n";
+
 close IN;
 close OUT;
 
-open OUT, ">> $bindir/pddl+.cpp";
-print OUT '#include "fixyywrap.h"';
-print OUT "\n\n";
-close OUT;
+open IN, "< $bindir/pddl+.cpp";
+my $has_include = 0;
+while (<IN>) {
+	if (m/#include "fixyywrap.h"/) {
+		$has_include = 1;
+		last;
+	}
+}
+close IN;
 
+if (!$has_include) {
+	open OUT, ">> $bindir/pddl+.cpp";
+	print OUT '#include "fixyywrap.h"';
+	print OUT "\n\n";
+	close OUT;
+}

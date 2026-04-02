@@ -29,6 +29,7 @@
 #include "temporalconstraints.h"
 #include "globals.h"
 #include "numericanalysis.h"
+#include "NumericRPGBuilder.h"
 #include "temporalanalysis.h"
 
 #include "compressionsafescheduler.h"
@@ -1940,6 +1941,39 @@ FF::HTrio FF::calculateHeuristicAndSchedule(ExtendedMinimalState & theState, Ext
 
     populateTimestamps(minTimestamps, makespan, header, now);
 
+    if (NumericRPGBuilder::isActive()) {
+        if (LPScheduler::workOutFactLayerZeroBoundsStraightAfterRecentAction) {
+            theState.getEditableInnerState().secondMin.swap(extrapolatedMin);
+            theState.getEditableInnerState().secondMax.swap(extrapolatedMax);
+        }
+
+        if (Globals::globalVerbosity & 131072) {
+            const NumericRPGBuilder::ProjectedState projectedState
+                = NumericRPGBuilder::projectState(theState.getInnerState(), theState.startEventQueue, header, now);
+            cout << NumericRPGBuilder::describeProjectedState(projectedState);
+        }
+
+        HTrio toReturn(0.0, makespan, makespan, theState.getInnerState().planLength - theState.getInnerState().actionsExecuting, "Numeric interval evaluation");
+        const NumericSolver::Result numericResult = NumericRPGBuilder::getSolver().solve(theState.getInnerState());
+
+        if (numericResult.heuristicValue < 0) {
+            return HTrio(-1.0, DBL_MAX, DBL_MAX, INT_MAX, "Numeric interval heuristic detected a deadend");
+        }
+
+        RPGBuilder::getHeuristic()->filterApplicableActions(theState.getInnerState(), theState.timeStamp, helpfulActions);
+        toReturn.heuristicValue = numericResult.heuristicValue;
+        toReturn.qbreak = numericResult.heuristicValue;
+        toReturn.goalsSatisfied = numericResult.goalSatisfied;
+        toReturn.admissibleCostEstimate = 0.0;
+
+        if (tryToSchedule.werePlanCostsCalculated()) {
+            currentCost.first = true;
+            currentCost.second = tryToSchedule.getCurrentPlanCost();
+        }
+
+        return toReturn;
+    }
+
     double costLimit = -DBL_MAX;
 
     if (NumericAnalysis::theMetricIsMonotonicallyWorsening() && tryToSchedule.werePlanCostsCalculated() && Globals::bestSolutionQuality != -DBL_MAX) {
@@ -2173,6 +2207,24 @@ FF::HTrio FF::calculateHeuristicAndCompressionSafeSchedule(ExtendedMinimalState 
     double makespan = 0.0;
 
     populateTimestamps(minTimestamps, makespan, header, now);
+
+    if (NumericRPGBuilder::isActive()) {
+        if (Globals::globalVerbosity & 131072) {
+            const NumericRPGBuilder::ProjectedState projectedState
+                = NumericRPGBuilder::projectState(theState.getInnerState(), theState.startEventQueue, header, now);
+            cout << NumericRPGBuilder::describeProjectedState(projectedState);
+        }
+
+        const NumericSolver::Result numericResult = NumericRPGBuilder::getSolver().solve(theState.getInnerState());
+        if (numericResult.heuristicValue < 0) {
+            return HTrio(-1.0, DBL_MAX, DBL_MAX, INT_MAX, "Numeric interval heuristic detected a deadend");
+        }
+
+        RPGBuilder::getHeuristic()->filterApplicableActions(theState.getInnerState(), theState.timeStamp, helpfulActions);
+        HTrio toReturn(numericResult.heuristicValue, makespan, makespan, theState.getInnerState().planLength - theState.getInnerState().actionsExecuting, "Compression-safe numeric interval evaluation", numericResult.goalSatisfied);
+        toReturn.admissibleCostEstimate = 0.0;
+        return toReturn;
+    }
 
     list<pair<double, list<ActionSegment> > > relaxedPlan;
 

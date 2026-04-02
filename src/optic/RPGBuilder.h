@@ -1557,6 +1557,21 @@ public:
     static vector<list<Literal*> > & getEndNegativePropositionalPreconditions() {
         return actionsToEndNegativePreconditions;
     };
+    static vector<list<NumericPrecondition> > & getStartNumericPreconditions() {
+        return actionsToStartNumericPreconditions;
+    }
+    static vector<list<NumericPrecondition> > & getInvariantNumericPreconditions() {
+        return actionsToNumericInvariants;
+    }
+    static vector<list<NumericPrecondition> > & getEndNumericPreconditions() {
+        return actionsToEndNumericPreconditions;
+    }
+    static vector<list<NumericEffect> > & getStartNumericEffectsRaw() {
+        return actionsToStartNumericEffects;
+    }
+    static vector<list<NumericEffect> > & getEndNumericEffectsRaw() {
+        return actionsToEndNumericEffects;
+    }
     static vector<list<int> > & getEndRPGNumericPreconditions() {
         return actionsToRPGNumericEndPreconditions;
     }

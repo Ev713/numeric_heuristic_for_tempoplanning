@@ -1,272 +1,413 @@
 # Numeric Heuristic For Temporal Planning
 
-This repository is a research fork of the OPTIC temporal planner. The goal of
-the fork is to experiment with a numeric reduction of temporal planning
-problems: compile temporal structure into a numeric abstraction that preserves
-useful timing information while remaining close to a numeric STRIPS-style
-representation, then use that abstraction to build a stronger heuristic than
-the original FF-style heuristic used by OPTIC.
+This repository is a research fork of OPTIC with an experimental numeric
+search path under `src/optic`. The project goal is to derive a stronger
+heuristic for temporal planning by compiling some temporal structure into a
+numeric abstraction, then evaluating that abstraction during search.
 
-At a high level:
+The codebase is not a clean-room planner. It is mostly upstream OPTIC plus
+local research code.
 
-- upstream OPTIC provides parsing, grounding, temporal reasoning, search, and
-  scheduling
-- upstream VAL provides the PDDL parser, typechecker, and validation-related
-  infrastructure used by OPTIC
-- this fork adds a separate "numeric search" path under `src/optic` intended to
-  hold the compilation and numeric heuristic code
+## Repository Layout
 
-The repository currently contains the scaffold for that work. The numeric path
-is present in the codebase and build system, but it is not yet a full
-implementation of the compilation described below.
+- `src/optic`: OPTIC itself, including search, temporal reasoning, relaxed
+  planning graph code, and the numeric-search branch
+- `src/VALfiles`: bundled VAL parser / typechecker / instantiation support
+- `tests`: sample PDDL files used for manual experiments
+- `numeric_reduction.tex`: theory notes for the intended reduction
 
-## What This Repo Is
+## What OPTIC Still Does
 
-The codebase is mostly the OPTIC planner source tree with local modifications.
-The important directories are:
+Even on the numeric branch, the surrounding planner infrastructure is still
+OPTIC:
 
-- `src/optic`: the planner itself, including search, relaxed planning graph,
-  scheduling, and the numeric-search fork points
-- `src/VALfiles`: VAL parser, typechecking, and related support code used by
-  the planner front-end
-- `tests`: sample domain/problem files for manual experiments
+- parsing domain and problem files
+- grounding and instantiating operators
+- maintaining temporal search states
+- scheduling and temporal consistency checks
+- running enforced hill-climbing / weighted A*
 
-This fork should be understood as "OPTIC plus an in-progress numeric heuristic
-research branch", not as a clean-room planner implementation.
+The standard entry point is [`src/optic/opticMain.cpp`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/opticMain.cpp).
+The build selects either the standard path or the numeric path with
+`-DUSE_NUMERIC_SEARCH`.
 
-## OPTIC In This Repository
+## Numeric Entry Points
 
-OPTIC is a forward-chaining temporal planner derived from POPF. In this tree it
-is responsible for:
-
-- parsing PDDL domain and problem files
-- instantiating grounded operators
-- building the temporal relaxed planning graph
-- evaluating states with the standard FF/RPG-style heuristic
-- searching over partial-order temporal states
-- checking and refining temporal consistency with the scheduler
-
-The original OPTIC entry point is in `src/optic/opticMain.cpp`. The planner
-builds the instantiated problem, initializes the RPG machinery, then runs the
-FF/OPTIC search stack.
-
-The core upstream subsystems you are likely to touch are:
-
-- `RPGBuilder*`: grounded representation and relaxed planning graph machinery
-- `FFSolver*`: search over temporal states
-- `minimalstate*`: search-state representation
-- `temporalanalysis*`, `temporalconstraints*`, `lpscheduler*`: temporal
-  reasoning and schedule checking
-
-## VAL In This Repository
-
-VAL is bundled because OPTIC depends on it for parsing and semantic analysis of
-PDDL input. In practical terms, `src/VALfiles` supplies:
-
-- lexer/parser support
-- PDDL AST structures
-- typechecking
-- instantiation support used by the planner front-end
-- validator-related utility code inherited with the upstream distribution
-
-This repository is not primarily a VAL project, but OPTIC will not build or run
-without that code.
-
-## Research Goal: Numeric Reduction Of Temporal Problems
-
-The intended research direction in this fork is:
-
-1. start from a temporal planning problem
-2. split each durative action into start and end actions
-3. enrich that split-action problem with auxiliary boolean and numeric
-   variables that track temporal information
-4. solve or relax the enriched numeric problem to obtain a heuristic for the
-   original temporal search
-
-The point is not to recover the exact original temporal problem inside a
-classical planner. The point is to create a reduction that is stricter than the
-naive start/end split, while still being cheap enough to evaluate during
-search.
-
-### Baseline Split Reduction
-
-The standard starting point is to split each durative action `a` into:
-
-- a start action `a^start`
-- an end action `a^end`
-
-This preserves some temporal structure, but it loses a lot of information about
-whether a sequence of starts and ends can actually be scheduled in time.
-
-## Intended Compilation
-
-The current theory behind the fork adds numeric machinery to the split problem
-to track lower and upper bounds on the makespan of a partially ordered temporal
-execution.
-
-### Lower-Bound Tracking
-
-The lower-bound side of the compilation keeps a bounded number of implicit
-"levels". Each level tracks a non-overlapping chain of actions. If actions on
-the same level do not intersect, then the sum of their minimum durations is a
-valid lower bound on the overall makespan.
-
-The theory introduces, for each tracked level `k`:
-
-- a boolean flag indicating whether level `k` currently has an open action
-- per-action flags indicating whether action `a` is open in level `k`
-- a numeric variable `time_span(k)` that accumulates minimum durations of
-  closed actions assigned to that level
-
-Intuitively:
-
-- opening an action places it in the first available level
-- closing that action removes it from the level and adds `d_min(a)` to that
-  level's accumulated span
-
-Each `time_span(k)` is then a lower bound on the full plan makespan.
-
-### Upper-Bound Tracking
-
-The upper-bound side of the compilation tries to maintain a chain of
-intersecting actions linking the beginning of the plan to the end of the plan.
-The sum of the maximum durations of the actions in that chain is an upper bound
-on makespan.
-
-The theory introduces:
-
-- a global `time_span` for the upper-bound chain
-- a per-action numeric marker `poten_link(a)`
-- a binary `link_parity` variable
-
-The rough idea is:
-
-- every opening action marks itself as a candidate for the next chain link
-- every opening action also adds `d_max(a)` to the upper-bound accumulator
-- when an action closes, it is either:
-  - a true link in the chain, in which case parity flips and the action is
-    retired from consideration, or
-  - a non-link action, in which case its previously added `d_max(a)` is
-    removed from the accumulator
-
-This part of the theory is more complex than the lower-bound side and is still
-research code in design terms.
-
-### Combined Reduction
-
-The final intended compiled problem combines:
-
-- the original boolean effects of the split temporal actions
-- the lower-bound auxiliary variables
-- the upper-bound auxiliary variables
-- consistency conditions enforcing that tracked lower bounds do not exceed
-  tracked upper bounds
-
-The intended heuristic benefit is that the compiled numeric relaxation should
-rule out more temporally impossible partial plans than the plain split-action
-encoding.
-
-## Current Implementation Status
-
-The current code contains the first structural hooks for this work under
-`src/optic`:
-
-- `NumericCompilation.*`
-- `NumericSolver.*`
-- `NumericRPGBuilder.*`
-- `NumericFFSolver.*`
-
-The build system also exposes separate numeric binaries:
+The numeric branch is built into separate binaries:
 
 - `optic-numeric-clp`
 - `optic-numeric-cplex`
 
-These are enabled with `-DUSE_NUMERIC_SEARCH`.
+These are defined in [`src/optic/CMakeLists.txt`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/CMakeLists.txt).
 
-Important limitation: the current implementation is only a scaffold.
+When `USE_NUMERIC_SEARCH` is enabled:
 
-Today, the numeric path does the following:
+- `ACTIVE_RPG_BUILDER` becomes `NumericRPGBuilder`
+- `ACTIVE_SOLVER` becomes `NumericFF`
 
-- initializes a `NumericCompilation` object from the current grounded problem
-- allocates a `NumericSolver`
-- routes execution through `NumericFF`
-- forces `RPGHeuristic::blindSearch`
+That switch happens in [`src/optic/opticMain.cpp`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/opticMain.cpp).
 
-Today, the numeric path does not yet do the following:
+## Current Numeric Architecture
 
-- fully compile temporal actions into the enriched numeric reduction described
-  above
-- evaluate search states with a real numeric-reduction heuristic
-- replace the standard FF heuristic with a stronger compiled numeric estimate
+The numeric path currently consists of four main files:
 
-In its current form, `NumericCompilation` mainly records basic problem
-statistics and goal identifiers, and `NumericSolver` mainly checks whether a
-state already satisfies the goals. The core reduction from the theory is still
-to be implemented.
+- [`src/optic/NumericRPGBuilder.h`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericRPGBuilder.h) and [`src/optic/NumericRPGBuilder.cpp`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericRPGBuilder.cpp)
+- [`src/optic/NumericCompilation.h`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericCompilation.h) and [`src/optic/NumericCompilation.cpp`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericCompilation.cpp)
+- [`src/optic/NumericSolver.h`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericSolver.h) and [`src/optic/NumericSolver.cpp`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericSolver.cpp)
+- [`src/optic/NumericFFSolver.cpp`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericFFSolver.cpp)
 
-## Code Map For The Numeric Path
+The basic control flow is:
 
-If you are working on the research implementation, the most relevant files are:
+1. `NumericRPGBuilder::initialise()` runs normal `RPGBuilder::initialise()`.
+2. It then builds a `NumericCompilation` from the grounded problem.
+3. It allocates a `NumericSolver` over that compilation.
+4. During search, `FFSolver` checks `NumericRPGBuilder::isActive()` and calls
+   the numeric solver instead of the standard RPG heuristic evaluation.
 
-- `src/optic/opticMain.cpp`: chooses standard or numeric search via
-  `USE_NUMERIC_SEARCH`
-- `src/optic/CMakeLists.txt`: defines the numeric binaries
-- `src/optic/NumericRPGBuilder.*`: numeric-search initialization hook
-- `src/optic/NumericCompilation.*`: intended home of the compiled abstraction
-- `src/optic/NumericSolver.*`: intended home of numeric heuristic evaluation
-- `src/optic/NumericFFSolver.*`: wrapper around the search path for the numeric
-  variant
-- `src/optic/FFSolver.*`: current search implementation that ultimately needs
-  to consume the numeric heuristic
+The numeric heuristic hook is in:
+
+- [`src/optic/FFSolver.cpp#L1944`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/FFSolver.cpp#L1944)
+- [`src/optic/FFSolver.cpp#L2204`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/FFSolver.cpp#L2204)
+
+## What `NumericCompilation` Does Today
+
+`NumericCompilation` is no longer an empty scaffold. It builds a fairly large
+explicit description of the intended compiled problem.
+
+For each grounded action it records:
+
+- the source action id
+- a printable action name
+- min and max duration
+- the indices of the compiled actions generated from it
+
+It also records:
+
+- literal goals from the original problem
+- counts of grounded actions, numeric fluents, and numeric goals
+- a list of compiled boolean facts
+- a list of compiled numeric fluents
+- a list of compiled actions
+
+### Compiled Auxiliary Variables
+
+The compiled boolean facts include:
+
+- original non-static literals
+- `has_open_action(k)` style level flags
+- `open_in(k, a)` style per-level / per-action flags
+
+The compiled numeric fluents include:
+
+- original PNEs
+- `time_span(k)` lower-bound accumulators
+- `upper_minus_time_span(k)` positive upper-minus-lower variables, encoding `upper_time_span - time_span(k)`
+- `link_parity`
+- `poten_link(a)` markers
+
+The compilation code now also distinguishes which compiled numeric fluents are
+auxiliary rather than inherited from the original problem. That matters for the
+compiled NFD step, because some close actions are intended to reset only this
+auxiliary bookkeeping state.
+
+### Compiled Action Families
+
+For each original grounded action, the current code generates explicit action
+families such as:
+
+- `open_to_level(action, k)__even`
+- `open_to_level(action, k)__odd`
+- `open_outside_levels(action)__even`
+- `open_outside_levels(action)__odd`
+- `close_at_level(action, k)__link`
+- `close_at_level(action, k)__link__reset`
+- `close_at_level(action, k)__non_link_witness(other-action)`
+- `close_at_level(action, k)__non_link_witness(other-action)__reset`
+- `close_outside_levels(action)__link`
+- `close_outside_levels(action)__link__reset`
+- `close_outside_levels(action)__non_link_witness(other-action)`
+- `close_outside_levels(action)__non_link_witness(other-action)__reset`
+
+These actions inherit the original start/end propositional preconditions,
+invariants, numeric preconditions, propositional effects, and numeric effects,
+then add the lower-bound and upper-bound tracking structure.
+
+The upper-bound bookkeeping is now encoded in restricted-task form. Instead of
+keeping separate raw upper- and lower-bound variables and comparing them
+directly, the compilation carries one positive upper-minus-lower fluent per
+tracked lower bound:
+
+- `upper_minus_time_span(k) = upper_time_span - time_span(k)`
+
+This avoids invalid numeric preconditions of the form `x < y` where both sides
+are variables. The intended consistency check is now simply:
+
+- `upper_minus_time_span(k) >= 0`
+
+That positivity is intended as an invariant of the compilation. In the current
+encoding, applicability effectively checks it twice:
+
+- the current relaxed state must already satisfy `upper_minus_time_span(k) >= 0`
+- actions whose updates could decrease `upper_minus_time_span(k)` also carry
+  explicit numeric guards such as `upper_minus_time_span(k) >= c`, ensuring the
+  next relaxed state remains nonnegative after the update
+
+The second condition is somewhat redundant with the first invariant check, but
+it is harmless and makes the post-update requirement explicit in the compiled
+action schema.
+
+Action updates are compiled directly into those slack fluents:
+
+- when an action increases the shared upper bound by `c`, every
+  `upper_minus_time_span(k)` is increased by `c`
+- when an action increases `time_span(k)` by `c`, that same
+  `upper_minus_time_span(k)` is decreased by `c`
+- when an action decreases the shared upper bound by `c`, every
+  `upper_minus_time_span(k)` is decreased by `c`
+
+The `__reset` closing variants are meant to capture the case where the action
+being closed is the final open action in the current compiled fragment. They:
+
+- require that no other `open_in(level, action)` fact is true anywhere in the
+  compiled state
+- perform the normal closing update
+- then reset the auxiliary temporal-to-numeric bookkeeping state so that the
+  next unrelated fragment starts fresh
+
+In the current compilation, those reset variants clear:
+
+- all `has_open_action(k)` level flags
+- all `time_span(k)` lower-bound accumulators
+- all `upper_minus_time_span(k)` slack variables
+- `link_parity`
+- all `poten_link(a)` values
+
+The implementation is in
+[`src/optic/NumericCompilation.cpp`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericCompilation.cpp),
+primarily the action-generation loop beginning around line 223.
+
+### Important Practical Detail
+
+The compiled action set grows quickly. On the included airport test problem,
+the numeric compilation currently reports:
+
+- `40` original grounded actions
+- `2` tracked lower-bound levels
+- `164` compiled boolean facts
+- `44` compiled numeric fluents
+- `5040` compiled actions
+
+So the compilation is already substantial on a small instance, and it is
+reasonable to expect memory pressure on larger problems.
+
+## What `NumericSolver` Actually Computes Today
+
+The current `NumericSolver` is a real heuristic implementation, but it does not
+yet solve the compiled action system produced by `NumericCompilation`.
+
+Instead, it performs an interval-style fixed-point relaxation over the original
+grounded problem:
+
+- it starts from the current state's reachable facts
+- it builds numeric intervals from `state.secondMin` / `state.secondMax`
+- it iteratively applies original start and end actions when their
+  propositional, invariant, and numeric preconditions are satisfied
+- it propagates propositional add effects
+- it widens numeric fluent intervals through original numeric effects
+- it accumulates additive support costs through that relaxation
+- it accounts for the fact that end actions are only meaningful once the
+  corresponding start has been supported
+- it stops when the goals become reachable or the relaxation reaches a fixpoint
+
+The main loop is in
+[`src/optic/NumericSolver.cpp#L100`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericSolver.cpp#L100).
+
+### Numeric Formula Evaluation
+
+The solver currently evaluates numeric expressions by interval arithmetic over:
+
+- constants
+- fluents
+- add
+- subtract
+- multiply
+- divide
+
+It then checks numeric preconditions and goals by interval overlap / bound
+tests.
+
+That logic lives in:
+
+- [`src/optic/NumericSolver.cpp#L346`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericSolver.cpp#L346)
+- [`src/optic/NumericSolver.cpp#L483`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/NumericSolver.cpp#L483)
+
+### Current NFD Status
+
+The current solver should be read as a numeric `h_add` / interval-relaxation
+prototype rather than a finished numeric FF heuristic.
+
+What is in place now:
+
+- interval propagation over numeric expressions and effects
+- additive support-cost accumulation through propositions and fluents
+- explicit support-cost tracking for already-started actions, so an end action
+  is not treated as free once it becomes reachable
+- reset-closing variants have now been added to the compilation, together with
+  metadata identifying which compiled numeric fluents are auxiliary
+
+What is still missing:
+
+- stable relaxed-plan extraction
+- stable preferred / helpful action extraction in the NFD sense
+- a compiled-action solver that consumes the reset variants directly
+- validation on a broader set of numeric planning problems
+
+There was an attempt to add achiever-tracking and FF-style regression, based on
+the sibling `numeric-fast-downward` code, but that work is not yet finished and
+should still be treated as experimental.
+
+For the next compiled NFD step, the intended relaxed semantics of a reset close
+is:
+
+- do not overwrite an auxiliary interval with the point value `0`
+- instead widen that auxiliary interval so that `0` is included
+
+That matches the monotone relaxation idea used elsewhere in the solver: reset
+effects should preserve already-reachable auxiliary values while also making
+the fresh-fragment value `0` reachable.
+
+## The Key Mismatch In The Current Implementation
+
+This is the most important point for anyone continuing the work:
+
+`NumericCompilation` constructs a rich compiled action model, but
+`NumericSolver` does not consume that compiled model.
+
+Today:
+
+- the compilation is used for summary / debug / bookkeeping
+- the solver iterates over `compilation.getOriginalActions()`
+- applicability and effects are read from `RPGBuilder`'s original start/end
+  structures
+
+This means the current heuristic is not yet the compiled numeric reduction
+described in the theory notes. It is a separate interval relaxation over the
+original grounded temporal split.
+
+## Search Integration Details
+
+The numeric branch is wired directly into `FFSolver`.
+
+When `NumericRPGBuilder::isActive()` is true:
+
+- `FFSolver` skips the normal RPG-based heuristic evaluation
+- it calls `NumericRPGBuilder::getSolver().solve(...)`
+- it returns the resulting numeric interval heuristic value as
+  `heuristicValue`
+
+At the moment, search integration is still incomplete on the FF side:
+
+- the numeric branch has a custom numeric heuristic value
+- it does not yet have a finished numeric relaxed-plan extraction pipeline
+- helpful-action behavior is therefore still inherited from the surrounding
+  OPTIC machinery rather than a completed NFD-specific FF extractor
+
+In this mode the returned diagnosis strings are:
+
+- `"Numeric interval evaluation"`
+- `"Compression-safe numeric interval evaluation"`
+
+`NumericFF::search()` also sets `RPGHeuristic::blindSearch = true` before
+delegating to the base `FF::search()`. That is consistent with bypassing the
+standard RPG relaxed plan extraction, although the current code still has some
+mixed signaling around `blindSearch` between `NumericRPGBuilder` and
+`NumericFF`.
+
+## Extra Plumbing Added For The Numeric Solver
+
+The numeric solver needs raw access to the grounded numeric structures. To
+support that, [`src/optic/RPGBuilder.h`](/home/kraken/Documents/GitHub/numeric_heuristic_for_tempoplanning/src/optic/RPGBuilder.h)
+now exposes:
+
+- start numeric preconditions
+- invariant numeric preconditions
+- end numeric preconditions
+- raw start numeric effects
+- raw end numeric effects
+
+There are also a few small compile-fix style changes in VAL / OPTIC comparator
+helpers, such as `const`-qualifying `operator()` implementations.
+
+## Current Runtime Behavior
+
+The numeric path should still be treated as experimental research code.
+
+Recent solver work made the numeric heuristic more NFD-like by moving from a
+near-pure reachability estimate toward cost-propagating interval support. On
+the included airport test this previously raised the initial numeric heuristic
+substantially compared to the older `h = 1` behavior.
+
+However, the branch is not in a fully stable state yet:
+
+- the standard `optic-clp` binary still remains the reference point for
+  reliable behavior on the included tests
+- the numeric branch still lacks a finished FF-style relaxed-plan /
+  helpful-action implementation
+- the current debug build tree has shown runtime instability while that FF-side
+  work is being integrated
+
+So the right summary is:
+
+- the numeric heuristic itself is no longer just scaffolding
+- the NFD cost-propagation work has started and is partially implemented
+- the overall numeric search path is not yet a stable or finished planner
 
 ## Build Notes
 
-This repository inherits OPTIC's original build model and solver dependencies.
-To build it you need the usual upstream prerequisites, in particular:
+Typical debug build flow:
+
+1. Run `./run-cmake-debug`
+2. Run `./build-debug`
+
+This repository still inherits OPTIC's original dependency model. In practice
+you need:
 
 - `cmake`
 - `bison`
 - `flex`
 - either CLP or CPLEX
 
-The helper scripts at repository root are inherited from OPTIC, for example:
+The helper scripts at repo root are inherited from OPTIC:
 
 - `run-cmake-debug`
 - `run-cmake-release`
 - `run-cmake-static`
 - `run-cmake-for-cplex-debug-x86`
 - `run-cmake-for-cplex-static-x86`
-
-After configuring, use the matching build script:
-
 - `build-debug`
 - `build-release`
 - `build-static`
 
-Depending on available libraries, the resulting binaries include some subset of:
+Depending on available libraries, builds may produce some subset of:
 
 - `optic-clp`
 - `optic-cplex`
 - `optic-numeric-clp`
 - `optic-numeric-cplex`
 
-## Usage Notes
+## Status Summary
 
-The standard OPTIC binaries behave like upstream OPTIC.
+What is real now:
 
-The numeric binaries are experimental. At present they should be treated as a
-development path for the numeric-reduction heuristic, not as a finished planner
-variant with established performance improvements.
+- a separate numeric build path
+- compilation of an explicit auxiliary temporal-to-numeric action family
+- a runnable numeric heuristic
+- search-time integration of that heuristic into `FFSolver`
 
-## Summary
+What is still missing:
 
-This repository is:
-
-- an OPTIC-based temporal planner codebase
-- bundled with VAL infrastructure required by OPTIC
-- extended with an in-progress numeric compilation framework for temporal
-  heuristic design
-
-The long-term objective is to compile temporal information into a numeric
-abstraction that is stronger than the naive action-splitting reduction and use
-that abstraction to guide temporal search more effectively.
+- using the compiled action family as the actual transition system for the
+  heuristic
+- a stronger heuristic than the current interval propagation
+- control of compilation blow-up on larger grounded problems
+- evidence that the numeric branch improves search over standard OPTIC
