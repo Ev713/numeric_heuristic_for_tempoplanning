@@ -13,9 +13,9 @@ set(CMAKE_CXX_FLAGS_PROFILE "-g3 -pg -O -fprofile-arcs -Wno-unused-but-set-varia
 
 set(CMAKE_CXX_LINK_FLAGS_PROFILE "-pg")
 
-add_subdirectory(VALfiles)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/VALfiles)
 
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/optic")
-	add_subdirectory(optic)
+	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/optic)
 endif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/optic")

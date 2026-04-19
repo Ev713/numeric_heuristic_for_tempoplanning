@@ -44,5 +44,3 @@ add_executable(parser ${parser_SRCS})
 target_link_libraries(parser
         ParsePDDL
 )
-
-

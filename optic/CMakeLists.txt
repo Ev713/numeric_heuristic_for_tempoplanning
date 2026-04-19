@@ -25,13 +25,15 @@ set(CMAKE_CXX_LINK_FLAGS "-static ${CMAKE_CXX_LINK_FLAGS}")
 endif(STATIC_OPTIC)
 
 include_directories(${val_SOURCE_DIR} ${val_SOURCE_DIR}/parsing ${val_BINARY_DIR} ${CLP_INCLUDES}/coin ${CBC_INCLUDES}/coin ${CPLEX_INCLUDES} ${CONCERT_INCLUDES}  ${GSL_INCLUDES})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../numeric-original)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../nfd/optic-integration)
 
 set(optic_build_srcs
     compressionsafescheduler.cpp
     totalordertransformer.cpp
     partialordertransformer.cpp
     FFSolver.cpp
-    NumericFFSolver.cpp
+    ../nfd/optic-integration/NumericFFSolver.cpp
     FFEvent.cpp
     globals.cpp
     lpscheduler.cpp
@@ -39,14 +41,14 @@ set(optic_build_srcs
     RPGBuilderAnalysis.cpp
     RPGBuilderEvaluation.cpp
     RPGBuilderNumerics.cpp
-    NumericRPGBuilder.cpp
-    NumericCompilation.cpp
-    NumericSolver.cpp
+    ../numeric-original/NumericRPGBuilder.cpp
+    ../numeric-original/NumericCompilation.cpp
+    ../nfd/optic-integration/NumericSolver.cpp
     temporalanalysis.cpp
     minimalstate.cpp
     temporalconstraints.cpp
     numericanalysis.cpp
-    solver.cpp
+    ../nfd/optic-integration/solver.cpp
     NNF.cpp
     PreferenceHandler.cpp
     choosepreconditions.cpp)
@@ -54,6 +56,10 @@ set(optic_build_srcs
 add_library(OpticCommon STATIC ${optic_build_srcs})
 target_link_libraries(OpticCommon ParsePDDL Inst)
 SET_TARGET_PROPERTIES(OpticCommon PROPERTIES COMPILE_FLAGS "-DPOPF3ANALYSIS")
+
+add_executable(numeric-compilation-driver ../numeric-original/CompilationMain.cpp)
+target_link_libraries(numeric-compilation-driver OpticCommon ParsePDDL Inst)
+SET_TARGET_PROPERTIES(numeric-compilation-driver PROPERTIES COMPILE_FLAGS "-DPOPF3ANALYSIS")
 
 if (CLP_INCLUDES AND CBC_INCLUDES)
 
